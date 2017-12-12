@@ -2,6 +2,8 @@
 %global ini_name  40-lzf.ini
 %global php       php70u
 
+%bcond_without zts
+
 Name:		%{php}-pecl-lzf
 Version:	1.6.6
 Release:	1.ius%{?dist}
@@ -57,37 +59,65 @@ slight speed cost.
 sed -e '/name="lib/d' -i package.xml
 rm -r %{pecl_name}-%{version}/lib/
 
+mv %{pecl_name}-%{version} NTS
+%if %{with zts}
+cp -pr NTS ZTS
+%endif
 
-%build
-cd %{pecl_name}-%{version}
-phpize
-%configure --enable-lzf --with-liblzf
-
-%{__make} %{?_smp_mflags}
-
-%install
-cd %{pecl_name}-%{version}
-%{__make} install INSTALL_ROOT=%{buildroot} INSTALL="install -p"
-
-%{__mkdir_p} %{buildroot}%{_sysconfdir}/php.d
-%{__cat} > %{buildroot}%{_sysconfdir}/php.d/%{ini_name} << 'EOF'
+cat > %{ini_name} << EOF
 ; Enable %{pecl_name} extension module
 extension=lzf.so
 EOF
+
+
+%build
+pushd NTS
+phpize
+%configure --enable-lzf --with-liblzf --with-php-config=%{_bindir}/php-config
+%{__make} %{?_smp_mflags}
+popd
+
+%if %{with zts}
+pushd ZTS
+zts-phpize
+%configure --enable-lzf --with-liblzf --with-php-config=%{_bindir}/zts-php-config
+%{__make} %{?_smp_mflags}
+popd
+%endif
+
+
+%install
+%{__make} -C NTS install INSTALL_ROOT=%{buildroot} INSTALL="install -p"
+%{__install} -D -p -m 644 %{ini_name} %{buildroot}%{php_inidir}/%{ini_name}
+
+%if %{with zts}
+%{__make} -C ZTS install INSTALL_ROOT=%{buildroot} INSTALL="install -p"
+%{__install} -D -p -m 644 %{ini_name} %{buildroot}%{php_ztsinidir}/%{ini_name}
+%endif
 
 %{__install} -D -p -m 644 package.xml %{buildroot}%{pecl_xmldir}/%{pecl_name}.xml
 
 
 %check
-cd %{pecl_name}-%{version}
-
-TEST_PHP_EXECUTABLE=%{_bindir}/php \
+pushd NTS
+TEST_PHP_EXECUTABLE=%{__php} \
 REPORT_EXIT_STATUS=1 \
 NO_INTERACTION=1 \
-%{_bindir}/php run-tests.php \
+%{__php} run-tests.php \
     -n -q \
-    -d extension_dir=%{buildroot}%{php_extdir} \
-    -d extension=lzf.so \
+    -d extension=%{buildroot}%{php_extdir}/lzf.so
+popd
+
+%if %{with zts}
+pushd ZTS
+TEST_PHP_EXECUTABLE=%{__ztsphp} \
+REPORT_EXIT_STATUS=1 \
+NO_INTERACTION=1 \
+%{__ztsphp} run-tests.php \
+    -n -q \
+    -d extension=%{buildroot}%{php_ztsextdir}/lzf.so
+popd
+%endif
 
 
 %post
@@ -102,9 +132,15 @@ fi
 
 %files
 %doc %{pecl_name}-%{version}/CREDITS
-%config(noreplace) %{_sysconfdir}/php.d/%{ini_name}
-%{php_extdir}/lzf.so
 %{pecl_xmldir}/%{pecl_name}.xml
+
+%{php_extdir}/lzf.so
+%config(noreplace) %{php_inidir}/%{ini_name}
+
+%if %{with zts}
+%{php_ztsextdir}/lzf.so
+%config(noreplace) %{php_ztsinidir}/%{ini_name}
+%endif
 
 
 %changelog
@@ -113,6 +149,7 @@ fi
 - Port from Fedora to IUS
 - Install package.xml as %%{pecl_name}.xml, not %%{name}.xml
 - Re-add scriptlets (file triggers not yet available in EL)
+- Enable ZTS
 
 * Tue Oct 03 2017 Remi Collet <remi@fedoraproject.org> - 1.6.5-7
 - rebuild for https://fedoraproject.org/wiki/Changes/php72
